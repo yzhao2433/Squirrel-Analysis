@@ -6,9 +6,9 @@ library(ggpubr)
 library(dplyr)
 
 # read in datasets
-squirrel_df <- read.csv("C:/Users/xinya/Downloads/cleaned_squirrel.csv")
-combined <- read.csv("C:/Users/Xinya/Downloads/combined.csv")
-hectare_df <- read.csv("C:/Users/xinya/Downloads/cleaned_hectare.csv")
+squirrel_df <- read.csv("cleaned_squirrel.csv")
+combined <- read.csv("combined.csv")
+hectare_df <- read.csv("cleaned_hectare.csv")
 
 
 # clean the hectare conditions to change the "calm, busy" to "moderate"
