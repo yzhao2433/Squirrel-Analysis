@@ -12,8 +12,8 @@ library(gridExtra)
 
 
 # read in datasets
-squirrel_df <- read.csv("C:/Users/xinya/Downloads/cleaned_squirrel.csv")
-hectare_df <- read.csv("C:/Users/xinya/Downloads/cleaned_hectare.csv")
+squirrel_df <- read.csv("cleaned_squirrel.csv")
+hectare_df <- read.csv("cleaned_hectare.csv")
 hectare_grid_df <- read.csv("C:/Users/xinya/Downloads/2018_Central_Park_Squirrel_Census_-_Hectare_Grid_20240330.csv")
 
 
