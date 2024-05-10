@@ -9,7 +9,7 @@ hect<-read.csv("cleaned_hectare.csv")
 squirrel <-read.csv("cleaned_squirrel.csv")
 
 
-
+#cleaning shifts to binary
 nc <-ncol(squirrel)
 Y <-squirrel$Shift
 new_Y <-numeric(length(Y))
@@ -25,8 +25,8 @@ X <-as.matrix(squirrel[, 17:21])
 new_X <-as.matrix(squirrel[, 17:21])
 X<-new_X
 X[, "Running"] <- ifelse(X[, "Running"] == "TRUE", 1, 0)
-#fit logistic regression
-model <- lm(Y ~ X, family = binomial)
+#fit logistic regression for shift~activity
+model <- glm(Y ~ X, family = binomial)
 summary(model)
 
 am <- which(combined$Shift=='AM')
@@ -94,6 +94,7 @@ am_mov_tb <- matrix(
 am_mov_tb<-data.frame(am_mov_tb)
 write_csv(am_mov_tb,"am_mov_tb.csv")
 
+#mosaic plot for condition, activity based on shifts
 data_am <- as.table( 
   matrix( 
     as.matrix(am_mov_tb), 
@@ -149,7 +150,7 @@ mosaicplot(data_am,
        
        # adding title to the chart 
        main = "AM activity condition plot",
-       type="FT"
+       type="pearson"
 ) 
 mosaicplot(data_pm, 
        
@@ -158,7 +159,7 @@ mosaicplot(data_pm,
        
        # adding title to the chart 
        main = "PM activity condition plot",
-       type="FT"
+       type="pearson"
 ) 
 
 
@@ -166,6 +167,7 @@ library(stringr)
 n<- nrow(combined)
 for (i in 1:n) {
   #Cleaning temperature data
+  #cleaning dog data
   combined$temp[i]<-as.numeric(str_extract(combined$Sighter.Observed.Weather.Data[i], "(\\d+)", group = 1))
   combined$dog[i]<-as.numeric(ifelse((str_extract(combined$Other.Animal.Sightings[i], "(Dogs)", group = 1)=='Dogs'),1,0))
   if (is.na(combined$dog[i])){
@@ -231,7 +233,7 @@ y_mov_tb <- matrix(
     sum(run_y_calm),sum(chase_y_calm),sum(climb_y_calm),sum(eat_y_calm),sum(forage_y_calm)
   )
 )
-
+#mosaic plot for dog presence
 data_dog_y <- as.table( 
   matrix( 
     as.matrix(y_mov_tb), 
@@ -291,12 +293,13 @@ mosaicplot(data_dog_n,
            type="pearson"
 ) 
 
-lm_da <-lm(Y_da ~ X_da[, "Running"]+X_da[, "Eating"]+X_da[, "Chasing"]+X_da[, "Climbing"]+X_da[, "Foraging"])
-summary(lm_da)
+#experiments
+#lm_da <-lm(Y_da ~ X_da[, "Running"]+X_da[, "Eating"]+X_da[, "Chasing"]+X_da[, "Climbing"]+X_da[, "Foraging"])
+#summary(lm_da)
 
-glm_da <-glm(X_da[, "Eating"]~Y_da )
+#glm_da <-glm(X_da[, "Eating"]~Y_da )
              #X_da[, "Running"]++X_da[, "Chasing"]+X_da[, "Climbing"]+X_da[, "Foraging"],family = binomial)
-summary(glm_da$coefficients)
+#summary(glm_da$coefficients)
 
 #Fitting against temperature (with activities)
 has_temp <-which(!is.na(combined$temp))
@@ -311,8 +314,8 @@ tau_m<-data.frame(m_temp.all$coefficients)
 m_pre <-m_temp.all$fitted.values
 plot(m_pre[,19])
 
-lm_temp <- lm(temp_Y~temp_X[, "Running"]+temp_X[, "Eating"]+temp_X[, "Chasing"]+temp_X[, "Climbing"]+temp_X[, "Foraging"])
-summary(lm_temp)
+#lm_temp <- lm(temp_Y~temp_X[, "Running"]+temp_X[, "Eating"]+temp_X[, "Chasing"]+temp_X[, "Climbing"]+temp_X[, "Foraging"])
+#summary(lm_temp)
 
 
 combined$Shift <-as.numeric(ifelse(combined$Shift=="AM",1,0))
@@ -323,20 +326,25 @@ combined$Chasing <-as.numeric(ifelse(combined$Chasing=="TRUE",1,0))
 combined$Climbing<-as.numeric(ifelse(combined$Climbing=="TRUE",1,0))
 combined$Eating<-as.numeric(ifelse(combined$Eating=="TRUE",1,0))
 combined$Foraging<-as.numeric(ifelse(combined$Foraging=="TRUE",1,0))
-
+#categorizing variables as movement/food
 combined$Movement<-as.numeric(ifelse(combined$Movement=="TRUE",1,0))
 combined$Food <-as.numeric(ifelse(combined$Food=="TRUE",1,0))
+#categorizing hectare, temperature
 combined$hec <-as.numeric(str_extract(combined$Hectare,"(\\d+)",group = 1))
 combined$hec <- ifelse(combined$hec <=14, "low", ifelse(is.numeric(combined$hec)&combined$hec<=28,"mid","high"))
 combined$temp <- ifelse(combined$temp<=30,"cold", ifelse(is.numeric(combined$temp)&combined$temp<=60, "moderate","warm"))
 
+#training for decision tree
 ncs <- ncol(combined)
+#deleting NAs
 combined <- combined[which(!is.na(combined$temp)),]
 combined <- combined[which(!combined$Litter==""),]
 combined <-combined[which(!is.na(combined$Location)),]
+#select condition variables
 selected <- combined[,c(34,35,ncs-3,ncs-2,ncs-1,ncs,7,39)]
 move <- selected[,c(-2)]
 food <- selected[,c(-1)]
+#data split
 create_train_test <- function(data, size = 0.8, train = TRUE) {
   n_row = nrow(data)
   total_row = size * n_row
@@ -355,19 +363,15 @@ food_test <- create_train_test(food,0.8,train = FALSE)
 
 library(rpart)
 library(rpart.plot)
+#train movement
 fit_move <- rpart(Movement~., data = move_train, method = 'class')
 rpart.plot(fit_move, extra = 106)
 predict_move <-predict(fit_move, move_test, type = 'class')
 
+#train food
 fit_food <-rpart(Food~., data = food_train, method = 'class')
 rpart.plot(fit_food,extra = 106)
 predict_food <-predict(fit_food, food_test, type = 'class')
 
-library(randomForest)
-library(caret)
-
-model <- randomForest(Movement~.,data= move_train)
-importance(model)  
-pred_test <- predict(model, newdata = move_test, type= "class")
 
 
