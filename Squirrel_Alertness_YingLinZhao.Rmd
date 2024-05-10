@@ -1,0 +1,375 @@
+---
+title: "Squirrel Analysis"
+author: "Ying Lin Zhao (yz2433)"
+date: "2024-03-24"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(Metrics)
+squirrel_df <- read.csv("cleaned_squirrel.csv")
+hectare_df <- read.csv("cleaned_hectare.csv")
+combined_df <- read.csv("combined_clean.csv")
+library(shiny)
+library(nnet)
+library(MASS)
+library(ggvenn)
+library(boot)
+library(datawizard)
+library(gridExtra)
+```
+```{r}
+# Cleaning data
+combined_df <- combined_df |>
+  filter(Age != "?")
+
+combined_df$Kuks <- as.logical(combined_df$Kuks)
+combined_df$Quaas <- as.logical(combined_df$Quaas)
+combined_df$Moans <- as.logical(combined_df$Moans)
+combined_df$Tail.flags <- as.logical(combined_df$Tail.flags)
+combined_df$Tail.twitches <- as.logical(combined_df$Tail.twitches)
+
+before_sound <- ggvenn(combined_df, c("Kuks", "Quaas", "Moans"), fill_color = c("pink", "lightblue", "lightgreen"), show_percentage = FALSE)
+
+before_tail <- ggvenn(combined_df, c("Tail.flags", "Tail.twitches"), fill_color = c("pink", "lightblue"), show_percentage = FALSE)
+
+grid.arrange(before_sound, before_tail, ncol = 2)
+
+# There are overlaps in alertness sounds and behaviors. Since overlapping entries
+# can not be categorized clearly, entries with any overlaps are removed .
+combined_df <- combined_df |> 
+  filter(!(Tail.flags == TRUE & Tail.twitches == TRUE)) |>
+  filter(!(Kuks == TRUE & Quaas == TRUE))
+
+ggvenn(combined_df, c("Kuks", "Quaas", "Moans"), fill_color = c("pink", "lightblue", "lightgreen"), show_percentage = FALSE)
+
+ggvenn(combined_df, c("Tail.flags", "Tail.twitches"), fill_color = c("pink", "lightblue"), show_percentage = FALSE)
+
+```
+
+# Source: https://www.wired.com/2014/06/squirrel-alarm-calls-are-surprisingly-complex/ 
+# Kuks - short, sharp, broad-frequency sound. "Imagine a dog barking and then speed it up and shorten it down to squirrel-size," says McRae.
+# Quaas - longer version of Kuks# The moan, in contrast to kuks and quaas, is tonal, almost like a whistle.
+# Tail has a conspicuous whipping motion
+# Tail resembles an arch-like shape
+```{r}
+combined_df$sound <- rep(NA, nrow(combined_df))
+combined_df$tail <- rep(NA, nrow(combined_df))
+combined_df$sound[combined_df$Kuks == TRUE] <- "Kuks"
+combined_df$sound[combined_df$Quaas == TRUE] <- "Quaas"
+combined_df$sound[combined_df$Moans == TRUE] <- "Moans"
+combined_df$sound[is.na(combined_df$sound)] <- "NoSound"
+combined_df$tail[combined_df$Tail.flags == TRUE] <- "TailFlag"
+combined_df$tail[combined_df$Tail.twitches == TRUE] <- "TailTwitch"
+combined_df$tail[is.na(combined_df$tail)] <- "NoTail"
+
+combined_df$alert <- rep(NA, nrow(combined_df))
+combined_df$alert[combined_df$Kuks == TRUE] <- "Kuks"
+combined_df$alert[combined_df$Quaas == TRUE] <- "Quaas"
+combined_df$alert[combined_df$Moans == TRUE] <- "Moans"
+combined_df$alert[combined_df$Tail.flags == TRUE] <- "TailFlag"
+combined_df$alert[combined_df$Tail.twitches == TRUE] <- "TailTwitch"
+combined_df$alert[is.na(combined_df$alert)] <- "NotAlert"
+```
+We can see in the stacked proportion graph below, there is a disproportionate representation of juvenile squirrels and adult squirrels. This may lead to failure of models to observe significant relationship between Age and alertness.
+```{r}
+par(mfrow = c(1,2), xpd=TRUE)
+proportion_agealert <- prop.table(table(combined_df$Age, combined_df$alert), margin = 2)
+# Create the stacked bar plot
+barplot(proportion_agealert,
+  legend = FALSE, col = c("lightpink", "lightblue"),
+  ylab = "Proportion",
+  las = 2
+) 
+
+legend("bottomright", legend = rownames(proportion_agealert), fill = c("lightpink", "lightblue"), cex=0.5, pt.cex = 1)
+
+
+proportion_alert <- prop.table(table(combined_df$alert, combined_df$Age), margin = 2)
+
+# Create the stacked bar plot
+barplot(proportion_alert,
+  legend = FALSE, col = c("lightpink", "lightblue", "lightgreen","lavender","yellow",
+                         "orange"),
+  xlab = "Age", ylab = "Proportion"
+)
+```
+```{r}
+# Reference Y: Not Alert
+# Reference X: Adult
+sound_model <- multinom(relevel(as.factor(sound), ref = "NoSound") ~ as.factor(Age), data = combined_df)
+summary(sound_model)
+```
+```{r}
+z_sound <- summary(sound_model)$coefficients / summary(sound_model)$standard.errors
+p1 <- (1 - pnorm(abs(z_sound), 0, 1)) * 2
+print ("The following shows the p-values for the multinomial model where y is the sound alertness and the covariate is the age.")
+p1
+```
+```{r}
+
+tail_model <- multinom(relevel(as.factor(tail), ref = "NoTail") ~ as.factor(Age), data = combined_df)
+summary(tail_model)
+```
+```{r}
+z_tail <- summary(tail_model)$coefficients / summary(tail_model)$standard.errors
+p2 <- (1 - pnorm(abs(z_tail), 0, 1)) * 2
+print ("The following shows the p-values for the multinomial model where y is the tail alertness and the covariate is the age.")
+p2
+
+# References:
+# https://stats.oarc.ucla.edu/r/dae/multinomial-logistic-regression/
+```
+```{r}
+combined_df$birds <- rep(NA, nrow(combined_df))
+
+bird_regex <- "(?i)\\b(birds?|hawks?|robins?|blue jays?|pigeons?|sparrows?|finch(es)?|doves?|geese|goose)\\b"
+combined_df$birds <- str_extract_all(combined_df$Other.Animal.Sightings, bird_regex)
+
+# Filter to only entries with birds (now have 1390 entries)
+filtered_animals <- combined_df[lengths(combined_df$birds) > 0, ]
+filtered_animals
+
+# Standardize all animal observations
+filtered_animals$birds <- filtered_animals$birds |> lapply(tolower)
+
+# 292 pigeon observations
+filtered_animals$Pigeons <- ifelse(filtered_animals$birds == "pigeon" | filtered_animals$birds == "pigeons", "pigeon", "nopigeon")
+filtered_animals$Pigeons <- factor(filtered_animals$Pigeons,
+  levels = c("nopigeon", "pigeon")
+)
+
+# 61 hawk observations
+filtered_animals$Hawks <- ifelse(filtered_animals$birds == "hawk" | filtered_animals$birds == "hawks", "hawk", "nohawk")
+filtered_animals$Hawks <- factor(filtered_animals$Hawks,
+  levels = c("nohawk", "hawk")
+)
+
+# 44 robin observations
+filtered_animals$Robin <- ifelse(filtered_animals$birds == "robin" | filtered_animals$birds == "robins", "robin", "norobin")
+filtered_animals$Robin <- factor(filtered_animals$Robin,
+  levels = c("norobin", "robin")
+)
+
+# 36 blue jays observations
+filtered_animals$BlueJay <- ifelse(filtered_animals$birds == "blue jay" | filtered_animals$birds == "blue jays", "bluejay", "nobluejay")
+filtered_animals$BlueJay <- factor(filtered_animals$BlueJay,
+  levels = c("nobluejay", "bluejay")
+)
+
+# 127 sparrow observations
+filtered_animals$Sparrow <- ifelse(filtered_animals$birds == "sparrow" | filtered_animals$birds == "sparrows", "sparrow", "nosparrow")
+filtered_animals$Sparrow <- factor(filtered_animals$Sparrow,
+  levels = c("nosparrow", "sparrow")
+)
+
+# 15 goose observation
+filtered_animals$Goose <- ifelse(filtered_animals$birds == "geese" | filtered_animals$birds == "goose", "goose", "nogoose")
+filtered_animals$Goose <- factor(filtered_animals$Goose,
+  levels = c("nogoose", "goose")
+)
+
+# 2 finch observations
+filtered_animals$Finches <- ifelse(filtered_animals$birds == "finch" | filtered_animals$birds == "finches", "finch", "nofinch")
+filtered_animals$Finches <- factor(filtered_animals$Finches,
+  levels = c("nofinch", "finch")
+)
+
+# 1 dove observation
+filtered_animals$Doves <- ifelse(filtered_animals$birds == "dove" | filtered_animals$birds == "doves", "dove", "nodove")
+filtered_animals$Doves <- factor(filtered_animals$Doves,
+  levels = c("nodove", "dove")
+)
+```
+```{r}
+pigeon_count <- as.data.frame.matrix(table(filtered_animals$Pigeons,
+                                           filtered_animals$sound))[2,]
+hawk_count <- as.data.frame.matrix(table(filtered_animals$Hawks,
+                                         filtered_animals$sound))[2,]
+robin_count <- as.data.frame.matrix(table(filtered_animals$Robin,
+                                         filtered_animals$sound))[2,]
+bluejay_count <- as.data.frame.matrix(table(filtered_animals$BlueJay,
+                                         filtered_animals$sound))[2,]
+sparrow_count <- as.data.frame.matrix(table(filtered_animals$Sparrow,
+                                         filtered_animals$sound))[2,]
+# finches_count <- as.data.frame.matrix(table(filtered_animals$Finches,
+#                                          filtered_animals$sound))[2,]
+# doves_count <- as.data.frame.matrix(table(filtered_animals$Doves,
+#                                          filtered_animals$sound))[2,]
+goose_count <- as.data.frame.matrix(table(filtered_animals$Goose,
+                                         filtered_animals$sound))[2,]
+
+sound_count <- rbind(pigeon_count,hawk_count,robin_count,bluejay_count,
+                     sparrow_count,goose_count)
+
+sound_count <- rownames_to_column(sound_count, "Bird")
+
+sound_count <- pivot_longer(sound_count,
+                            cols = c("Kuks", "Quaas", "Moans", "NoSound"),
+                            names_to = "Sound",
+                            values_to = "Count")
+
+sound_count <- sound_count |> group_by(Bird) |> 
+  mutate(Proportion = Count / sum(Count))
+
+sound_plot <- ggplot(sound_count, aes(x = Bird, y = Proportion, fill = Sound)) +
+  geom_col(position = "stack") +
+  labs(title = "Animals & Sound", 
+       x = "Animals",
+       y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+pigeon_count <- as.data.frame.matrix(table(filtered_animals$Pigeons,
+                                           filtered_animals$tail))[2,]
+hawk_count <- as.data.frame.matrix(table(filtered_animals$Hawks,
+                                         filtered_animals$tail))[2,]
+robin_count <- as.data.frame.matrix(table(filtered_animals$Robin,
+                                         filtered_animals$tail))[2,]
+bluejay_count <- as.data.frame.matrix(table(filtered_animals$BlueJay,
+                                         filtered_animals$tail))[2,]
+sparrow_count <- as.data.frame.matrix(table(filtered_animals$Sparrow,
+                                         filtered_animals$tail))[2,]
+# finches_count <- as.data.frame.matrix(table(filtered_animals$Finches,
+#                                          filtered_animals$tail))[2,]
+# doves_count <- as.data.frame.matrix(table(filtered_animals$Doves,
+#                                          filtered_animals$tail))[2,]
+goose_count <- as.data.frame.matrix(table(filtered_animals$Goose,
+                                         filtered_animals$tail))[2,]
+
+tail_count <- rbind(pigeon_count,hawk_count,robin_count,bluejay_count,
+                     sparrow_count,goose_count)
+
+tail_count <- rownames_to_column(tail_count, "Bird")
+
+tail_count <- pivot_longer(tail_count,
+                            cols = c("NoTail", "TailFlag", "TailTwitch"),
+                            names_to = "Tail",
+                            values_to = "Count")
+
+tail_count <- tail_count |> group_by(Bird) |> 
+  mutate(Proportion = Count / sum(Count)) |>
+  mutate(BirdCount = sum(Count))
+
+tail_plot <- ggplot(tail_count, aes(x = Bird, y = Proportion, fill = Tail)) +
+  geom_col(position = "fill") +
+  labs(title = "Animals & Tails", 
+       x = "Animals",
+       y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+grid.arrange(sound_plot, tail_plot, ncol = 2)
+```
+```{r}
+# Reference Y: No sound
+# Reference X: Adult
+sound_bird_model <- multinom(relevel(as.factor(sound), ref = "NoSound") ~ Hawks + Pigeons + Robin + BlueJay + Sparrow + Goose, data = filtered_animals, Hess = TRUE)
+summary(sound_bird_model)
+```
+```{r}
+# Finding Z-score
+z_score_sound <- summary(sound_bird_model)$coefficients / summary(sound_bird_model)$standard.errors
+p_sound <- (1 - pnorm(abs(z_score_sound), 0, 1)) * 2
+print ("The following shows the p-values for the multinomial model where y is the sound alertness and the covariate are the presence of hawks, pigeons, robins, blue jays, sparrows, and geese.")
+p_sound
+
+# Prediction Graph
+new_data <- expand.grid(
+  Hawks = unique(filtered_animals$Hawks),
+  Pigeons = unique(filtered_animals$Pigeons),
+  Robin = unique(filtered_animals$Robin),
+  BlueJay = unique(filtered_animals$BlueJay),
+  Sparrow = unique(filtered_animals$Sparrow),
+  Goose = unique(filtered_animals$Goose)
+)
+
+predicted_probs <- predict(sound_bird_model, new_data, type = "probs")
+new_data <- cbind(new_data, predicted_probs)
+library(tidyr)
+new_data_long <- pivot_longer(new_data,
+  cols = c("NoSound", "Moans", "Kuks", "Quaas"),
+  names_to = "Outcome", values_to = "Probability"
+)
+
+par(mfrow = c(1,2))
+new_data_long |> ggplot(aes(x = Sparrow, y = Probability, color = Outcome)) +
+  facet_wrap(~Goose) + 
+  geom_jitter(width = 0.2, height = 0.02, size = 1.25) +
+  labs(title = "Predicted Probability of Sound \n As Opposed to No Sound",
+       subtitle = "Conditioned on the Presence of Sparrows and Geese",
+       x = "Sparrow", y = "Predicted Probability", color = "Outcome") +
+  theme_minimal()
+
+new_data_long |> ggplot(aes(x = Hawks, y = Probability, color = Outcome)) +
+  #facet_wrap(~Goose) + 
+  geom_jitter(width = 0.2, height = 0.02, size = 1.25) +
+  labs(title = "Predicted Probability of Sound \n As Opposed to No Sound",
+       subtitle = "Conditioned on the Presence of Hawks and Geese",
+       x = "Hawks", y = "Predicted Probability", color = "Outcome") +
+  theme_minimal()
+
+new_data_long |> ggplot(aes(x = Hawks, y = Probability, color = Outcome)) +
+  facet_wrap(~Sparrow) + 
+  geom_jitter(width = 0.2, height = 0.02, size = 1.25) +
+  labs(title = "Predicted Probability of Sound \n As Opposed to No Sound",
+       subtitle = "Conditioned on the Presence of Hawks and Sparrow",
+       x = "Hawks", y = "Predicted Probability", color = "Outcome") +
+  theme_minimal()
+
+```
+$$\frac{P(Sound)}{P(No Tail Motion)}$$
+From the p values for the sound model, we observe that for Kuks, only sparrow and goose variables are statistically significant on a 0.05 level. Since moans only has 1 observation, variables such as pigeon, sparrow, and goose that is not observed when moan is observed has a coefficient of 0 and a p-value of 0. The other covariates are not statistically significant with moans, again due to the low number of observations. As for quaas, only the hawk variable is statistically significant. Similar to the moans situation, of the 30 entries associated with quaas, there were no observations where robins and blue jays were observed, which resulted in the 0s for the p-value. 
+```{r}
+tail_bird_model <- multinom(relevel(as.factor(tail), ref = "NoTail") ~ Hawks + Pigeons + Robin + BlueJay + Sparrow + Goose, data = filtered_animals)
+summary(tail_bird_model)
+```
+```{r}
+# Finding Z-score
+z_score_tail <- summary(tail_bird_model)$coefficients / summary(tail_bird_model)$standard.errors
+p_tail <- (1 - pnorm(abs(z_score_tail), 0, 1)) * 2
+p_tail
+
+# Prediction Graph
+new_data_tail <- expand.grid(
+  Hawks = unique(filtered_animals$Hawks),
+  Pigeons = unique(filtered_animals$Pigeons),
+  Robin = unique(filtered_animals$Robin),
+  BlueJay = unique(filtered_animals$BlueJay),
+  Sparrow = unique(filtered_animals$Sparrow),
+  Goose = unique(filtered_animals$Goose)
+)
+predicted_probs_tail <- predict(tail_bird_model, new_data_tail, type = "probs")
+new_data_tail <- cbind(new_data_tail, predicted_probs_tail)
+new_tail <- pivot_longer(new_data_tail,
+  cols = c("NoTail", "TailFlag", "TailTwitch"),
+  names_to = "Outcome", values_to = "Probability"
+)
+
+new_tail |> ggplot(aes(x = Robin, y = Probability, color = Outcome)) +
+  #facet_wrap(~Sparrow) + 
+  geom_jitter(width = 0.2, height = 0.02, size = 1.25) +
+  labs(title = "Predicted Probability of Tail Motion \n As Opposed to No Tail Motion",
+       subtitle = "Conditioned on the Presence of Robins",
+       x = "Robin", y = "Predicted Probability", color = "Outcome") +
+  theme_minimal()
+
+new_tail |> ggplot(aes(x = Robin, y = Probability, color = Outcome)) +
+  facet_wrap(~Hawks) + 
+  geom_jitter(width = 0.2, height = 0.02, size = 1.25) +
+  labs(title = "Predicted Probability of Tail Motion \n As Opposed to No Tail Motion",
+       subtitle = "Conditioned on the Presence of Hawks and Robins",
+       x = "Hawks", y = "Predicted Probability", color = "Outcome") +
+  theme_minimal()
+
+```
+
+From the p values for the tail model, we observe that only the robin covariate is statistically significant for tail flag on a 0.05 level. Since moans only has 1 observation, variables such as pigeon, sparrow, and goose that is not observed when moan is observed has a coefficient of 0 and a p-value of 0. The other covariates are not statistically significant with moans, again due to the low number of observations. As for quaas, only the hawk variable is statistically significant. Similar to the moans situation, of the 30 entries associated with quaas, there were no observations where robins and blue jays were obserbed, which resulted in the 0s for the p-value. 
+
+$$ln(\frac{P(Tail_i)}{P(No Tail Motion)})=\beta_{age}*X_{age}$$
+$$ln(\frac{P(Tail_i)}{P(No Tail Motion)})=\beta_{hawk}X_{hawk}+\beta_{goose}X_{goose}+\beta_{pigeon}X_{pigeon}+\beta_{robin}X_{robin}+\beta_{sparrow}*X_{sparrow}+\beta_{bluejay}*X_{bluejay}$$
+$$ln(\frac{P(Sound_i)}{P(No Sound)})=\beta_{age}*X_{age}$$
+$$ln(\frac{P(Sound_i)}{P(No Sound)})=\beta_{hawk}X_{hawk}+\beta_{goose}X_{goose}+\beta_{pigeon}X_{pigeon}+\beta_{robin}X_{robin}+\beta_{sparrow}*X_{sparrow}+\beta_{bluejay}*X_{bluejay}$$
+```{r}
